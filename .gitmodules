@@ -1,0 +1,4 @@
+[submodule "taesd"]
+	path = taesd
+	url = https://github.com/madebyollin/taesd.git
+	shallow = true
