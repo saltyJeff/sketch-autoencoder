@@ -1,0 +1,30 @@
+[tool.poetry]
+name = "sketch-autoencoder"
+version = "0.1.0"
+description = ""
+authors = ["Jefferson <saltyJeff@users.noreply.github.com>"]
+readme = "README.md"
+
+
+[tool.poetry.dependencies]
+python = "^3.11"
+torch = {version = "^2.5.1+cu124", source = "pytorch-gpu"}
+torchvision = {version = "^0.20.1+cu124", source = "pytorch-gpu"}
+torchaudio = {version = "^2.5.1+cu124", source = "pytorch-gpu"}
+lightning = "^2.4.0"
+
+
+[[tool.poetry.source]]
+name = "pytorch-gpu"
+url = "https://download.pytorch.org/whl/cu124"
+priority = "explicit"
+
+
+
+[tool.poetry.group.dev.dependencies]
+wandb = "^0.18.7"
+python-dotenv = "^1.0.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
