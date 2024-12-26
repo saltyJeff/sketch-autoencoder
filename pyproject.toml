@@ -12,6 +12,7 @@ torch = {version = "^2.5.1+cu124", source = "pytorch-gpu"}
 torchvision = {version = "^0.20.1+cu124", source = "pytorch-gpu"}
 torchaudio = {version = "^2.5.1+cu124", source = "pytorch-gpu"}
 lightning = "^2.4.0"
+open-clip-torch = "^2.29.0"
 
 
 [[tool.poetry.source]]

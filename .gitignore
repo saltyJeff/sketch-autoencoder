@@ -181,3 +181,4 @@ EMNIST
 .checkpoints/
 artifacts/
 dataset/
+ade20k-DatasetNinja/
