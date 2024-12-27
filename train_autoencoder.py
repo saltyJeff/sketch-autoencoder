@@ -22,14 +22,16 @@ if __name__ == "__main__":
     clip.eval()
     clip = clip.to('cuda')
 
-    model = SketchAutoencoder(16, 4, 64, 8, 4, vae, clip).to(memory_format=torch.channels_last)
-    data = Ade20kDatamodule(Path('./dataset/'), batch_size=32, num_workers=6)
+    model = SketchAutoencoder(hidden_dims=32, vae_dims=4, semantic_dims=128, texture_dims=8, 
+                              num_enc_blocks=4, num_tex_blocks=2,
+                              vae=vae, clip=clip).to(memory_format=torch.channels_last)
+    data = Ade20kDatamodule(Path('./dataset/'), batch_size=16, num_workers=6)
 
     # Initialize a trainer
     logger = WandbLogger(project="sketch_autoencoder", log_model=True, save_dir="./.checkpoints/")
     logger.watch(model)
     trainer = L.Trainer(
-        max_epochs=50,
+        max_epochs=100,
         logger=logger,
         precision='bf16-mixed'
     )

@@ -18,11 +18,11 @@ class InstanceNorm2d(nn.Module):
         return instance_norm_2d(x, self.eps)
 
 class ResBlock(nn.Module):
-    def __init__(self, dims: int, hidden_dim_factor: float=2):
+    def __init__(self, dims: int, kernel_size: int=7, hidden_dim_factor: float=2):
         super().__init__()
         self.hidden_dims = int(dims * hidden_dim_factor)
         self.block = nn.Sequential(
-            nn.Conv2d(dims, dims, kernel_size=3, padding=1),
+            nn.Conv2d(dims, dims, kernel_size=kernel_size, padding=kernel_size//2),
             InstanceNorm2d(),
             nn.Conv2d(dims, self.hidden_dims, kernel_size=1),
             nn.SiLU(),
@@ -32,10 +32,10 @@ class ResBlock(nn.Module):
         return x + self.block(x)
 
 class AdaNormBlock(nn.Module):
-    def __init__(self, dims: int, cond_dims: int, hidden_dim_factor: float=2):
+    def __init__(self, dims: int, cond_dims: int, kernel_size: int = 3, hidden_dim_factor: float=2):
         super().__init__()
         self.dims = dims
-        self.resblock = ResBlock(dims, hidden_dim_factor)
+        self.resblock = ResBlock(dims, kernel_size, hidden_dim_factor)
         self.cond = nn.Conv2d(cond_dims, 3*dims, kernel_size=1)
         self.norm = InstanceNorm2d()
         self.reset_parameters()
