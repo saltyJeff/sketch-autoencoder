@@ -16,16 +16,16 @@ if __name__ == "__main__":
     torch.backends.cudnn.benchmark = True
 
     vae = TAESD('taesd/taesdxl_encoder.pth', 'taesd/taesdxl_decoder.pth')
+    # delete the encoder to save VRAM
+    del vae.encoder
     vae.eval()
     vae = vae.to('cuda')
-    clip = CLIPWrapper('convnext_base_w', pretrained='laion2b_s13b_b82k')
-    clip.eval()
-    clip = clip.to('cuda')
+    # clip = CLIPWrapper('convnext_base_w', pretrained='laion2b_s13b_b82k')
+    # clip.eval()
+    # clip = clip.to('cuda')
 
-    model = SketchAutoencoder(hidden_dims=32, vae_dims=4, semantic_dims=128, texture_dims=8, 
-                              num_enc_blocks=4, num_tex_blocks=2,
-                              vae=vae, clip=clip).to(memory_format=torch.channels_last)
-    data = Ade20kDatamodule(Path('./dataset/'), batch_size=16, num_workers=6)
+    model = SketchAutoencoder((4, 32, 32), vae, 640, 4, 16, 2)
+    data = Ade20kDatamodule(Path('./dataset/'), batch_size=32, num_workers=6)
 
     # Initialize a trainer
     logger = WandbLogger(project="sketch_autoencoder", log_model=True, save_dir="./.checkpoints/")
