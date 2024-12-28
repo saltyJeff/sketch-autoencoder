@@ -19,6 +19,7 @@ class SketchAutoencoder(L.LightningModule):
     def __init__(self, vae_img_size: torch.Size, vae: TAESD, clip_embed_dims: int,
                  sem_embed_dims: int,
                  tex_dims: int, tex_hidden_dims: int, num_tex_blocks: int,
+                 kl_factor: float = 0.02,
                  lr: float = 1e-4):
         super().__init__()
         self.save_hyperparameters(ignore=['vae'])
@@ -42,6 +43,7 @@ class SketchAutoencoder(L.LightningModule):
         )
         
         # training parameters
+        self.kl_factor = kl_factor
         self.lr = lr
 
     def encode(self, z: torch.Tensor):
@@ -75,7 +77,7 @@ class SketchAutoencoder(L.LightningModule):
 
         losses = self.calc_losses(e, z, e_hat, z_hat, tex_mu, tex_log_var)
         self.log_dict(losses)
-        loss = losses['clip'] + losses['recon'] + 0.05*losses['kl']
+        loss = losses['clip'] + losses['recon'] + self.kl_factor*losses['kl']
         self.log('loss', loss, prog_bar=True)
         return loss
     
