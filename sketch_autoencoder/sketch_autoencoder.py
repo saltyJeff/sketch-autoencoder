@@ -27,7 +27,7 @@ class SketchAutoencoder(L.LightningModule):
         self.clip_embed_dims = clip_embed_dims
 
         # create semantic encoder
-        self.embedder = ImgEmbedder(vae_img_size, clip_embed_dims, 64)
+        self.embedder = ImgEmbedder(vae_img_size, clip_embed_dims, 128)
 
         # # create texture autoencoder
         # self.tex_encoder = nn.Sequential(
@@ -42,7 +42,7 @@ class SketchAutoencoder(L.LightningModule):
         self.lr = lr
 
     def encode(self, z: torch.Tensor):
-        e_hat = self.embedder.img_to_embed(z)
+        e_hat = self.embedder.img_to_embed(z).unsqueeze(1)
         # tex_latents = self.tex_encoder(z)
         # tex_mu, tex_log_var = torch.tensor_split(tex_latents, 2, dim=1)
         return e_hat, 0, 0
@@ -75,6 +75,8 @@ class SketchAutoencoder(L.LightningModule):
         # loss = -losses['clip'] + losses['recon'] + 2*losses['kl']
         loss = F.mse_loss(e, e_hat)
         self.log('loss', loss, prog_bar=True)
+        self.log('cos', F.cosine_similarity(e, e_hat).mean(), prog_bar=True)
+        self.log('recon', F.mse_loss(z, self.embedder.embed_to_img(e_hat)), prog_bar=True)
         return loss
     
     def decode_top_vae_latent(self, x: torch.Tensor) -> PIL.Image.Image:
@@ -90,10 +92,10 @@ class SketchAutoencoder(L.LightningModule):
 
         # losses = self.calc_losses(e, z, e_hat, z_hat, tex_mu, tex_log_var)
         # self.log_dict(losses)
-        # if batch_idx == 0:
+        if batch_idx == 0:
         #     self.logger.log_image(key='original', images=[self.decode_top_vae_latent(z)])
         #     self.logger.log_image(key='recon_img ', images=[self.decode_top_vae_latent(z_hat)])
-        #     self.logger.log_image(key='semantic', images=[self.decode_top_vae_latent(sem)])
+            self.logger.log_image(key='semantic', images=[self.decode_top_vae_latent(self.embedder.embed_to_img(e_hat))])
 
     def configure_optimizers(self):
         return torch.optim.AdamW(self.parameters(), lr=self.lr)

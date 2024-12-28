@@ -33,32 +33,34 @@ class ResBlock(nn.Module):
     def forward(self, x: torch.Tensor):
         return x + self.block(x)
 
+def inv_softplus(x: torch.Tensor, eps: float=1e-4) -> torch.Tensor:
+    return x.expm1().clamp_min(eps).log()
+def inv_linear(x: torch.Tensor, linear: nn.Linear) -> torch.Tensor:
+    return F.linear(x-linear.bias, linear.weight.T)
 class ImgEmbedder(nn.Module):
     def __init__(self, img_size: torch.Size, embed_dims: int, hidden_dims: int):
         super().__init__()
+        self.img_size = img_size
         self.img_dims = prod(img_size)
         self.embed_dims = embed_dims
-        
-        self.residual = nn.Linear(self.img_dims, hidden_dims // 2)
-        self.features = nn.Sequential(
-            nn.Linear(self.img_dims, hidden_dims // 2),
-            nn.Softplus()
-        )
-        self.fc = nn.Linear(hidden_dims, embed_dims)
+
+        self.in_layer = nn.Linear(self.img_dims, hidden_dims)
+        self.out_layer = nn.Linear(hidden_dims, embed_dims)
 
     def img_to_embed(self, z: torch.Tensor) -> torch.Tensor:
         e = z.flatten(1)
-        res = self.residual(e)
-        feat = self.features(e)
+        e = self.in_layer(e)
+        res, feat = torch.tensor_split(e, 2, dim=1)
+        feat = F.softplus(feat)
         e = torch.cat((res, feat), dim=1)
-        e = self.fc(e)
+        e = self.out_layer(e)
         return e
-    # @torch.no_grad()
-    # def embed_to_img(self, e: torch.Tensor) -> torch.Tensor:
-    #     e = inv_linear(e, self.out_layer)
-    #     for layer in self.hidden_layers:
-    #         e = inv_softplus(e)
-    #         e = inv_linear(e, layer)
-    #     e = inv_linear(e, self.in_layer)
-    #     z = e.view(-1, *self.img_size)
-    #     return z
+    @torch.no_grad()
+    def embed_to_img(self, e: torch.Tensor) -> torch.Tensor:
+        e = inv_linear(e, self.out_layer)
+        res, feat = torch.tensor_split(e, 2, dim=1)
+        feat = inv_softplus(feat)
+        e = torch.cat((res, feat), dim=1)
+        e = inv_linear(e, self.in_layer)
+        z = e.view(-1, *self.img_size)
+        return z
