@@ -31,7 +31,12 @@ class SketchAutoencoder(L.LightningModule):
         self.embedder = ImgEmbedder(vae_img_size, clip_embed_dims, sem_embed_dims)
 
         # create texture autoencoder
-        self.tex_encoder = ImgChannelTransform(vae_img_size, vae_img_size[0], tex_dims)
+        self.tex_encoder = nn.Sequential(
+            nn.Conv2d(vae_img_size[0], tex_hidden_dims, kernel_size=1),
+            *[ResBlock(tex_hidden_dims) for _ in range(num_tex_blocks)],
+            nn.Conv2d(tex_hidden_dims, 2*tex_dims, kernel_size=1),
+            nn.Tanh(3)
+        )
         
         # training parameters
         self.lr = lr
