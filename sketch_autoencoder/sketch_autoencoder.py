@@ -27,7 +27,7 @@ class SketchAutoencoder(L.LightningModule):
         self.clip_embed_dims = clip_embed_dims
 
         # create semantic encoder
-        self.embedder = ImgEmbedder(vae_img_size, clip_embed_dims, 32, 16)
+        self.embedder = ImgEmbedder(vae_img_size, clip_embed_dims, 64)
 
         # # create texture autoencoder
         # self.tex_encoder = nn.Sequential(
@@ -73,7 +73,7 @@ class SketchAutoencoder(L.LightningModule):
         # losses = self.calc_losses(e, z, e_hat, z_hat, tex_mu, tex_log_var)
         # self.log_dict(losses)
         # loss = -losses['clip'] + losses['recon'] + 2*losses['kl']
-        loss = -F.cosine_similarity(e, e_hat).mean()
+        loss = F.mse_loss(e, e_hat)
         self.log('loss', loss, prog_bar=True)
         return loss
     

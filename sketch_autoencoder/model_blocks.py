@@ -34,23 +34,24 @@ class ResBlock(nn.Module):
         return x + self.block(x)
 
 class ImgEmbedder(nn.Module):
-    def __init__(self, img_size: torch.Size, embed_dims: int, hidden_dims: int, num_blocks: int):
+    def __init__(self, img_size: torch.Size, embed_dims: int, hidden_dims: int):
         super().__init__()
-        self.img_size = img_size
-        self.fc_dims = hidden_dims * self.img_size[1] * self.img_size[2]
+        self.img_dims = prod(img_size)
         self.embed_dims = embed_dims
-
-        self.in_stem = nn.Conv2d(img_size[0], hidden_dims, kernel_size=1)
-        self.blocks = nn.ModuleList(ResBlock(hidden_dims, kernel_size=5) for _ in range(num_blocks))
-        self.out_fc = nn.Linear(self.fc_dims, self.embed_dims)
+        
+        self.residual = nn.Linear(self.img_dims, hidden_dims // 2)
+        self.features = nn.Sequential(
+            nn.Linear(self.img_dims, hidden_dims // 2),
+            nn.Softplus()
+        )
+        self.fc = nn.Linear(hidden_dims, embed_dims)
 
     def img_to_embed(self, z: torch.Tensor) -> torch.Tensor:
-        z = self.in_stem(z)
-        for block in self.blocks:
-            z = block(z)
         e = z.flatten(1)
-        e = self.out_fc(e)
-        e = F.tanh(e)
+        res = self.residual(e)
+        feat = self.features(e)
+        e = torch.cat((res, feat), dim=1)
+        e = self.fc(e)
         return e
     # @torch.no_grad()
     # def embed_to_img(self, e: torch.Tensor) -> torch.Tensor:
