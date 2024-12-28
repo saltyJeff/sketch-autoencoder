@@ -19,11 +19,12 @@ class InstanceNorm2d(nn.Module):
         return instance_norm_2d(x, self.eps)
 
 class ResBlock(nn.Module):
-    def __init__(self, dims: int, kernel_size: int=3, hidden_dim_factor: float=2):
+    def __init__(self, dims: int, kernel_size: int=3, stride: bool = False, hidden_dim_factor: float=2):
         super().__init__()
         self.hidden_dims = int(dims * hidden_dim_factor)
+        stride_dims = kernel_size//2 + 1 if stride else 1
         self.block = nn.Sequential(
-            nn.Conv2d(dims, dims, kernel_size=kernel_size, padding=kernel_size//2),
+            nn.Conv2d(dims, dims, kernel_size=kernel_size, stride=stride_dims, padding=kernel_size//2, bias=False),
             InstanceNorm2d(),
             nn.Conv2d(dims, self.hidden_dims, kernel_size=1),
             nn.SiLU(),
@@ -32,68 +33,31 @@ class ResBlock(nn.Module):
     def forward(self, x: torch.Tensor):
         return x + self.block(x)
 
-class AdaNormBlock(nn.Module):
-    def __init__(self, dims: int, cond_dims: int, kernel_size: int = 3, hidden_dim_factor: float=2):
-        super().__init__()
-        self.dims = dims
-        self.resblock = ResBlock(dims, kernel_size, hidden_dim_factor)
-        self.cond = nn.Conv2d(cond_dims, 3*dims, kernel_size=1)
-        self.norm = InstanceNorm2d()
-        self.reset_parameters()
-    def reset_parameters(self):
-        nn.init.zeros_(self.cond.weight)
-        nn.init.zeros_(self.cond.bias)
-    def forward(self, x: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
-        residual = x
-        cond = self.cond(c)
-        cond_bias, cond_scale, cond_gate = cond.tensor_split(3, dim=1)
-
-        x = self.norm(x)
-        x = (x * (1 + cond_scale)) + cond_bias
-        x = self.resblock(x)
-        return residual + cond_gate * x
-
-class ScaleTanh(nn.Module):
-    def __init__(self, scale: int):
-        super().__init__()
-        self.scale = scale
-    def forward(self, x: torch.Tensor):
-        return self.scale * F.tanh(x / self.scale)
-
-@torch.jit.script
-def inv_softplus(x: torch.Tensor, eps: float=1e-4) -> torch.Tensor:
-    return x.expm1().clamp_min(eps).log()
-def inv_linear(x: torch.Tensor, linear: nn.Linear) -> torch.Tensor:
-    return F.linear(x-linear.bias, linear.weight.T)
-
 class ImgEmbedder(nn.Module):
-    def __init__(self, img_size: torch.Size, embed_dims: int, num_hidden: int = 6, hidden_dim_factor: int = 8):
+    def __init__(self, img_size: torch.Size, embed_dims: int, hidden_dims: int, num_blocks: int):
         super().__init__()
         self.img_size = img_size
-        self.img_dims = prod(self.img_size)
-        self.hidden_dims = embed_dims * hidden_dim_factor
+        self.fc_dims = hidden_dims * self.img_size[1] * self.img_size[2]
         self.embed_dims = embed_dims
 
-        self.in_layer = nn.Linear(self.img_dims, self.hidden_dims)
-        self.hidden_layers = nn.ModuleList(
-            nn.Linear(self.hidden_dims, self.hidden_dims) for _ in range(num_hidden)
-        )
-        self.out_layer = nn.Linear(self.hidden_dims, self.embed_dims)
+        self.in_stem = nn.Conv2d(img_size[0], hidden_dims, kernel_size=1)
+        self.blocks = nn.ModuleList(ResBlock(hidden_dims, kernel_size=5) for _ in range(num_blocks))
+        self.out_fc = nn.Linear(self.fc_dims, self.embed_dims)
 
     def img_to_embed(self, z: torch.Tensor) -> torch.Tensor:
-        z = z.flatten(1)
-        z = self.in_layer(z)
-        for layer in self.hidden_layers:
-            z = layer(z)
-            z = F.softplus(z)
-        z = self.out_layer(z)
-        return z
-    @torch.no_grad()
-    def embed_to_img(self, e: torch.Tensor) -> torch.Tensor:
-        e = inv_linear(e, self.out_layer)
-        for layer in self.hidden_layers:
-            e = inv_softplus(e)
-            e = inv_linear(e, layer)
-        e = inv_linear(e, self.in_layer)
-        z = e.view(-1, *self.img_size)
-        return z
+        z = self.in_stem(z)
+        for block in self.blocks:
+            z = block(z)
+        e = z.flatten(1)
+        e = self.out_fc(e)
+        e = F.tanh(e)
+        return e
+    # @torch.no_grad()
+    # def embed_to_img(self, e: torch.Tensor) -> torch.Tensor:
+    #     e = inv_linear(e, self.out_layer)
+    #     for layer in self.hidden_layers:
+    #         e = inv_softplus(e)
+    #         e = inv_linear(e, layer)
+    #     e = inv_linear(e, self.in_layer)
+    #     z = e.view(-1, *self.img_size)
+    #     return z

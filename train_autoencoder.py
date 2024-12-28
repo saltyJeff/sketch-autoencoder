@@ -28,7 +28,7 @@ if __name__ == "__main__":
     data = Ade20kDatamodule(Path('./dataset/'), batch_size=32, num_workers=6)
 
     # Initialize a trainer
-    logger = WandbLogger(project="sketch_autoencoder", log_model=True, save_dir="./.checkpoints/")
+    logger = WandbLogger(project="vae_to_clip", log_model=True, save_dir="./.checkpoints/")
     logger.watch(model)
     trainer = L.Trainer(
         max_epochs=100,
