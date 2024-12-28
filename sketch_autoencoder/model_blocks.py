@@ -66,15 +66,20 @@ class ImgEmbedder(nn.Module):
         self.hidden_layer = nn.Linear(self.conv_dims, hidden_dims)
         self.out_layer = nn.Linear(hidden_dims, embed_dims)
 
+        self.scale = nn.Parameter(torch.zeros((1, hidden_dims)))
+        self.bias = nn.Parameter(torch.zeros((1, hidden_dims)))
+
     def img_to_embed(self, z: torch.Tensor) -> torch.Tensor:
         z = self.in_conv(z)
         e = z.flatten(1)
         e = self.hidden_layer(e)
+        e = e * (1 + self.scale) + self.bias
         e = self.out_layer(e)
         return e
     @torch.no_grad()
     def embed_to_img(self, e: torch.Tensor) -> torch.Tensor:
         e = inv_linear(e, self.out_layer)
+        e = (e - self.bias) / (1 + self.scale)
         e = inv_linear(e, self.hidden_layer)
         z = e.view(-1, *self.conv_size)
         z = inv_conv2d(z, self.in_conv, self.img_size)
