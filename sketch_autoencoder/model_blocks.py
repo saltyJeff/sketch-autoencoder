@@ -50,7 +50,7 @@ class ImgEmbedder(nn.Module):
         return z
 
 class ResBlock(nn.Module):
-    def __init__(self, dims: int, kernel_size: int=3, stride: bool = False, hidden_dim_factor: float=2):
+    def __init__(self, dims: int, kernel_size: int=5, stride: bool = False, hidden_dim_factor: float=2):
         super().__init__()
         self.hidden_dims = int(dims * hidden_dim_factor)
         stride_dims = kernel_size//2 + 1 if stride else 1
