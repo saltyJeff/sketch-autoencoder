@@ -75,7 +75,7 @@ class SketchAutoencoder(L.LightningModule):
 
         losses = self.calc_losses(e, z, e_hat, z_hat, tex_mu, tex_log_var)
         self.log_dict(losses)
-        loss = losses['clip'] + losses['recon'] + 0.02*losses['kl']
+        loss = losses['clip'] + losses['recon'] + 0.05*losses['kl']
         self.log('loss', loss, prog_bar=True)
         return loss
     
