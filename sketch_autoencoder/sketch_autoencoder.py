@@ -64,7 +64,7 @@ class SketchAutoencoder(L.LightningModule):
     def calc_losses(self, e: torch.Tensor, z: torch.Tensor, e_hat: torch.Tensor, z_hat: torch.Tensor,
                     tex_mu: torch.Tensor, tex_log_var: torch.Tensor) -> Losses:
         e = e.squeeze(1) # i goofed the dataset preparation, so there is an extra dim that needs to be removed
-        clip_loss = F.mse_loss(e_hat, e) 
+        clip_loss = F.mse_loss(e_hat, F.normalize(e) )
         recon_loss = F.mse_loss(z, z_hat)
         tex_kl_loss = (-0.5 * torch.sum(1 + tex_log_var - tex_mu**2 - tex_log_var.exp(), dim=1)).mean()
 
@@ -82,7 +82,7 @@ class SketchAutoencoder(L.LightningModule):
 
         losses = self.calc_losses(e, z, e_hat, z_hat, tex_mu, tex_log_var)
         self.log_dict(losses)
-        loss = losses['clip'] + losses['recon'] + self.init_kl_factor+(self.current_epoch*self.kl_factor_per_epoch)*losses['kl']
+        loss = losses['clip'] # + losses['recon'] + self.init_kl_factor+(self.current_epoch*self.kl_factor_per_epoch)*losses['kl']
         self.log('loss', loss, prog_bar=True)
         return loss
     

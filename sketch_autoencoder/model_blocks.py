@@ -80,7 +80,7 @@ class InvertibleBlock(nn.Module):
         return x
 
 class ImgEmbedder(nn.Module):
-    def __init__(self, img_size: torch.Size, embed_dims: int, hidden_dims: int, num_blocks: int = 2):
+    def __init__(self, img_size: torch.Size, embed_dims: int, hidden_dims: int):
         super().__init__()
         self.img_size = img_size
         self.img_dims = prod(img_size)
@@ -90,27 +90,23 @@ class ImgEmbedder(nn.Module):
 
         self.in_conv = nn.Conv2d(img_size[0], img_size[0] * 2, kernel_size=3, stride=2, padding=1)
         self.hidden_layer = nn.Linear(self.conv_dims, hidden_dims)
-        self.blocks = nn.ModuleList(
-            InvertibleBlock(hidden_dims) for _ in range(num_blocks)
-        )
         self.out_layer = nn.Linear(hidden_dims, embed_dims)
+        self.scale = nn.Parameter(torch.scalar_tensor(0.))
 
     def img_to_embed(self, z: torch.Tensor) -> torch.Tensor:
         z = self.in_conv(z)
         e = z.flatten(1)
         e = self.hidden_layer(e)
-        for block in self.blocks:
-            e = block(e)
         e = self.out_layer(e)
+        e = F.normalize(e)
         return e
-    @torch.no_grad()
     def embed_to_img(self, e: torch.Tensor) -> torch.Tensor:
-        e = inv_linear(e, self.out_layer)
-        for block in reversed(self.blocks):
-            e = block.invert(e)
-        e = inv_linear(e, self.hidden_layer)
-        z = e.view(-1, *self.conv_size)
-        z = inv_conv2d(z, self.in_conv, self.img_size)
+        e = e * (1 + self.scale)
+        with torch.no_grad():
+            e = inv_linear(e, self.out_layer)
+            e = inv_linear(e, self.hidden_layer)
+            z = e.view(-1, *self.conv_size)
+            z = inv_conv2d(z, self.in_conv, self.img_size)
         return z
 
 class ResBlock(nn.Module):
