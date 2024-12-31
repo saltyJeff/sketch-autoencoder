@@ -24,7 +24,7 @@ if __name__ == "__main__":
     # clip.eval()
     # clip = clip.to('cuda')
 
-    model = SketchAutoencoder((4, 32, 32), vae, 640, 2,
+    model = SketchAutoencoder((4, 32, 32), vae, 640, 16,
                               256, 
                               8, 6,
                               32, 8)

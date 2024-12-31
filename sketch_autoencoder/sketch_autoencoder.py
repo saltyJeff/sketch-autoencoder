@@ -29,12 +29,14 @@ class SketchAutoencoder(L.LightningModule):
         self.clip_embed_dims = clip_embed_dims
 
         # create img unembedder
-        self.img_unembedder = ImgUnembedder(clip_embed_dims, vae_img_size, sem_dims)
-        self.gate = nn.Sequential(
-            ConvNextBlock(vae_chans),
-            nn.Softmax2d()
+        self.img_unembedder = nn.Sequential(
+            ImgUnembedder(clip_embed_dims, vae_img_size, sem_dims),
+            ScaleTanh(3)
         )
-        
+        self.sem_gater = nn.Sequential(
+            ImgUnembedder(clip_embed_dims, vae_img_size, sem_dims),
+            nn.Sigmoid()
+        )
         # create texture autoencoder
         self.tex_encoder = nn.Sequential(
             nn.Conv2d(vae_chans, enc_hidden_dims, kernel_size=1),
@@ -58,11 +60,10 @@ class SketchAutoencoder(L.LightningModule):
     def decode(self, e: torch.Tensor, tex: torch.Tensor):
         e = F.normalize(e.squeeze(1)) # i goofed the dataset preparation, so there is an extra dim that needs to be removed
         sem = self.img_unembedder(e)
-        sem = sem
+        gate = self.sem_gater(e)
+        sem = sem * gate
         dec_input = torch.cat((sem, tex), dim=1)
         z_hat = self.decoder(dec_input)
-        gate = self.gate(sem)
-        z_hat = gate * sem + (1 - gate) * z_hat
         return z_hat, sem
     
     def calc_losses(self, z: torch.Tensor, z_hat: torch.Tensor, sem: torch.Tensor,
@@ -102,8 +103,8 @@ class SketchAutoencoder(L.LightningModule):
         tex = sample_vae(tex_mu, tex_logvar)
         z_hat, sem = self.decode(e, tex)
 
-        self.log('min', float((sem - z).min()), prog_bar=True)
-        self.log('max', float((sem - z).max()), prog_bar=True)
+        self.log('min', float((sem - z).abs().min()), prog_bar=True)
+        self.log('max', float((sem - z).abs().max()), prog_bar=True)
 
         losses = self.calc_losses(z, z_hat, sem, e, tex_mu, tex_logvar)
         self.log_dict(losses, prog_bar=True)
