@@ -25,10 +25,10 @@ if __name__ == "__main__":
     # clip = clip.to('cuda')
 
     model = SketchAutoencoder((4, 32, 32), vae, 640, 
-                              1, 8,
+                              16,
                               128, 
-                              16, 6,
-                              16, 6)
+                              32, 6,
+                              32, 8)
     data = Ade20kDatamodule(Path('./dataset/'), batch_size=64, num_workers=6)
 
     # Initialize a trainer

@@ -17,7 +17,7 @@ class Losses(TypedDict):
 
 class SketchAutoencoder(L.LightningModule):
     def __init__(self, vae_img_size: torch.Size, vae: TAESD, clip_embed_dims: int, 
-                 sem_chans: int, tex_chans: int, 
+                 tex_chans: int, 
                  sem_dims: int,
                  enc_hidden_dims: int, num_enc_blocks: int,
                  dec_hidden_dims: int, num_dec_blocks: int,
@@ -25,24 +25,23 @@ class SketchAutoencoder(L.LightningModule):
         super().__init__()
         self.save_hyperparameters(ignore=['vae'])
         self.vae_chans = vae_img_size[0]
-        self.sem_chans = sem_chans
-        unembed_size = (self.vae_chans + sem_chans, vae_img_size[1], vae_img_size[2])
         
         self.vae = vae
         self.vae.requires_grad_(False)
         self.clip_embed_dims = clip_embed_dims
 
         # create img unembedder
-        self.img_unembedder = ImgUnembedder(clip_embed_dims, unembed_size, sem_dims)
+        self.img_unembedder = ImgUnembedder(clip_embed_dims, vae_img_size, sem_dims)
         
         # create texture autoencoder
         self.tex_encoder = nn.Sequential(
             DownBlock(self.vae_chans, enc_hidden_dims),
             *[ConvNextBlock(enc_hidden_dims) for _ in range(num_enc_blocks)],
-            UpBlock(enc_hidden_dims, 2*tex_chans),
+            nn.Conv2d(enc_hidden_dims, 2*tex_chans, kernel_size=1)
         )
+        self.dec_up_tex = nn.Upsample(scale_factor=2)
         self.decoder = nn.Sequential(
-            nn.Conv2d(tex_chans + self.vae_chans + self.sem_chans, dec_hidden_dims, kernel_size=1),
+            nn.Conv2d(self.vae_chans + tex_chans, dec_hidden_dims, kernel_size=1),
             *[ConvNextBlock(dec_hidden_dims) for _ in range(num_dec_blocks)],
             nn.Conv2d(dec_hidden_dims, self.vae_chans, kernel_size=1),
             ScaleTanh(3)
@@ -57,8 +56,11 @@ class SketchAutoencoder(L.LightningModule):
 
     def decode(self, e: torch.Tensor, tex: torch.Tensor):
         e = F.normalize(e.squeeze(1)) # i goofed the dataset preparation, so there is an extra dim that needs to be removed
-        sem_z, sem_extra = self.img_unembedder(e).split([self.vae_chans, self.sem_chans], dim=1)
-        dec_input = torch.cat((sem_z, sem_extra, tex), dim=1)
+        sem_z = self.img_unembedder(e)
+        sem_z_clone = sem_z.clone()
+        sem_z_clone.detach()
+        tex = self.dec_up_tex(tex)
+        dec_input = torch.cat((sem_z_clone, tex), dim=1)
         z_hat = self.decoder(dec_input)
         return z_hat, sem_z
     
@@ -84,7 +86,7 @@ class SketchAutoencoder(L.LightningModule):
 
         losses = self.calc_losses(z, z_hat, sem, e, tex_mu, tex_logvar)
         self.log_dict(losses)
-        loss = losses['recon'] + 0.25*losses['kl'] + losses['clip']
+        loss = losses['recon'] + losses['kl'] + losses['clip']
         self.log('loss', loss, prog_bar=True)
         return loss
     
