@@ -10,6 +10,23 @@ class ScaleTanh(nn.Module):
     def forward(self, x: torch.Tensor):
         return F.tanh(x / self.scale) * self.scale
 
+class DownBlock(nn.Module):
+    def __init__(self, in_chans: int, out_chans: int, kernel_size: int = 3):
+        super().__init__()
+        stride = kernel_size//2 + 1
+        self.conv = nn.Conv2d(in_chans, out_chans, kernel_size=kernel_size, stride=stride, padding=kernel_size//2)
+    def forward(self, x: torch.Tensor):
+        return self.conv(x)
+
+class UpBlock(nn.Module):
+    def __init__(self, in_chans: int, out_chans: int, kernel_size: int = 3):
+        super().__init__()
+        scale = kernel_size//2 + 1
+        self.upsample = nn.Upsample(scale_factor=scale)
+        self.conv = nn.Conv2d(in_chans, out_chans, kernel_size=kernel_size, padding=kernel_size//2)
+    def forward(self, x: torch.Tensor):
+        return self.conv(self.upsample(x))
+
 class ConvNextBlock(nn.Module):
     def __init__(self, chans: int, kernel_size: int=3, stride: bool = False, hidden_chan_factor: float=4):
         super().__init__()

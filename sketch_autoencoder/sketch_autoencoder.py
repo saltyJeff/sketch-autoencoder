@@ -7,7 +7,7 @@ import lightning as L
 import PIL
 from typing import TypedDict
 from taesd.taesd import TAESD
-from .model_blocks import ConvNextBlock, ScaleTanh, ImgUnembedder
+from .model_blocks import ConvNextBlock, ScaleTanh, ImgUnembedder, DownBlock, UpBlock
 from .clip_wrapper import CLIPWrapper
 
 class Losses(TypedDict):
@@ -37,9 +37,9 @@ class SketchAutoencoder(L.LightningModule):
         
         # create texture autoencoder
         self.tex_encoder = nn.Sequential(
-            nn.Conv2d(self.vae_chans, enc_hidden_dims, kernel_size=1),
+            DownBlock(self.vae_chans, enc_hidden_dims),
             *[ConvNextBlock(enc_hidden_dims) for _ in range(num_enc_blocks)],
-            nn.Conv2d(enc_hidden_dims, 2*tex_chans, kernel_size=1),
+            UpBlock(enc_hidden_dims, 2*tex_chans),
         )
         self.decoder = nn.Sequential(
             nn.Conv2d(tex_chans + self.vae_chans + self.sem_chans, dec_hidden_dims, kernel_size=1),
