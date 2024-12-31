@@ -52,7 +52,6 @@ class SketchAutoencoder(L.LightningModule):
 
     def encode_tex(self, z: torch.Tensor):
         tex = self.tex_encoder(z)
-        tex = 0.99*tex + 0.01*F.normalize(tex)
         return tex
 
     def decode(self, e: torch.Tensor, tex: torch.Tensor):
