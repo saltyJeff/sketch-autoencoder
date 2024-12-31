@@ -24,8 +24,11 @@ if __name__ == "__main__":
     # clip.eval()
     # clip = clip.to('cuda')
 
-    model = SketchAutoencoder((4, 32, 32), vae, 640, 128, 16, 32, 6)
-    data = Ade20kDatamodule(Path('./dataset/'), batch_size=32, num_workers=6)
+    model = SketchAutoencoder((4, 32, 32), vae, 640, 2,
+                              256, 
+                              8, 6,
+                              32, 8)
+    data = Ade20kDatamodule(Path('./dataset/'), batch_size=64, num_workers=6)
 
     # Initialize a trainer
     logger = WandbLogger(project="vae_to_clip", log_model=True, save_dir="./.checkpoints/")

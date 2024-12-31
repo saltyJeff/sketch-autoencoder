@@ -7,7 +7,7 @@ import lightning as L
 import PIL
 from typing import TypedDict
 from taesd.taesd import TAESD
-from .model_blocks import ResBlock, InstanceNorm2d, ScaleTanh, ImgEmbedder
+from .model_blocks import ConvNextBlock, ScaleTanh, ImgEmbedder
 from .clip_wrapper import CLIPWrapper
 
 class Losses(TypedDict):
@@ -16,11 +16,10 @@ class Losses(TypedDict):
     kl: torch.Tensor
 
 class SketchAutoencoder(L.LightningModule):
-    def __init__(self, vae_img_size: torch.Size, vae: TAESD, clip_embed_dims: int,
-                 sem_embed_dims: int,
-                 tex_dims: int, tex_hidden_dims: int, num_tex_blocks: int,
-                 init_kl_factor: float = 0.02,
-                 kl_factor_per_epoch: float = 0.005,
+    def __init__(self, vae_img_size: torch.Size, vae: TAESD, clip_embed_dims: int, tex_chans: int, 
+                 sem_dims: int,
+                 enc_hidden_dims: int, num_enc_blocks: int,
+                 dec_hidden_dims: int, num_dec_blocks: int,
                  lr: float = 1e-4):
         super().__init__()
         self.save_hyperparameters(ignore=['vae'])
@@ -29,44 +28,46 @@ class SketchAutoencoder(L.LightningModule):
         self.vae.requires_grad_(False)
         self.clip_embed_dims = clip_embed_dims
 
-        # create semantic encoder
-        self.embedder = ImgEmbedder(vae_img_size, clip_embed_dims, sem_embed_dims)
-
+        # create img unembedder
+        self.img_embedder = ImgEmbedder(clip_embed_dims, vae_img_size, sem_dims)
+        
         # create texture autoencoder
         self.tex_encoder = nn.Sequential(
-            nn.Conv2d(vae_chans, tex_hidden_dims, kernel_size=1),
-            *[ResBlock(tex_hidden_dims) for _ in range(num_tex_blocks)],
-            nn.Conv2d(tex_hidden_dims, 2*tex_dims, kernel_size=1),
-            nn.Tanh()
+            nn.Conv2d(vae_chans, enc_hidden_dims, kernel_size=1),
+            *[ConvNextBlock(enc_hidden_dims) for _ in range(num_enc_blocks)],
+            nn.Conv2d(enc_hidden_dims, 2*tex_chans, kernel_size=1),
         )
-        self.tex_decoder = nn.Sequential(
-            nn.Conv2d(tex_dims, tex_hidden_dims, kernel_size=1),
-            *[ResBlock(tex_hidden_dims) for _ in range(num_tex_blocks)],
-            nn.Conv2d(tex_hidden_dims, vae_chans, kernel_size=1),
+        self.decoder = nn.Sequential(
+            nn.Conv2d(tex_chans + vae_chans, dec_hidden_dims, kernel_size=1),
+            *[ConvNextBlock(dec_hidden_dims) for _ in range(num_dec_blocks)],
+            nn.Conv2d(dec_hidden_dims, vae_chans, kernel_size=1),
             ScaleTanh(3)
         )
         
         # training parameters
-        self.init_kl_factor = init_kl_factor
-        self.kl_factor_per_epoch = kl_factor_per_epoch
         self.lr = lr
 
-    def encode(self, z: torch.Tensor):
-        e_hat = self.embedder.img_to_embed(z)
+    def encode_tex(self, z: torch.Tensor):
+        e_hat = self.img_embedder.encode_img(z)
         tex_mu, tex_log_var = self.tex_encoder(z).tensor_split(2, dim=1)
         return e_hat, tex_mu, tex_log_var
 
     def decode(self, e: torch.Tensor, tex: torch.Tensor):
-        sem = self.embedder.embed_to_img(e).clip(-3, 3)
-        z_hat = sem + self.tex_decoder(tex)
+        e = F.normalize(e.squeeze(1)) # i goofed the dataset preparation, so there is an extra dim that needs to be removed
+        sem = self.img_embedder.decode_embedding(e)
+        sem = sem.clip(-3, 3)
+        dec_input = torch.cat((sem, tex), dim=1)
+        z_hat = self.decoder(dec_input)
+        z_hat = z_hat.clip(-3, 3)
         return z_hat, sem
     
-    def calc_losses(self, e: torch.Tensor, z: torch.Tensor, e_hat: torch.Tensor, z_hat: torch.Tensor,
-                    tex_mu: torch.Tensor, tex_log_var: torch.Tensor) -> Losses:
-        e = e.squeeze(1) # i goofed the dataset preparation, so there is an extra dim that needs to be removed
-        clip_loss = F.mse_loss(e_hat, F.normalize(e) )
+    def calc_losses(self, z: torch.Tensor, z_hat: torch.Tensor, sem: torch.Tensor,
+                    e: torch.Tensor, e_hat: torch.Tensor,
+                    tex_mu: torch.Tensor, tex_logvar: torch.Tensor) -> Losses:
+        e = e.squeeze(1) 
+        clip_loss = F.mse_loss(z, sem)
         recon_loss = F.mse_loss(z, z_hat)
-        tex_kl_loss = (-0.5 * torch.sum(1 + tex_log_var - tex_mu**2 - tex_log_var.exp(), dim=1)).mean()
+        tex_kl_loss = (-0.5 * torch.sum(1 + tex_logvar - tex_mu**2 - tex_logvar.exp(), dim=1)).mean()
 
         return {
             'recon': recon_loss,
@@ -76,13 +77,13 @@ class SketchAutoencoder(L.LightningModule):
     
     def training_step(self, batch: tuple[torch.Tensor, torch.Tensor]):
         z, e = batch # VAE latents, clip embeddings
-        e_hat, tex_mu, tex_log_var = self.encode(z)
-        tex = sample_vae(tex_mu, tex_log_var)
-        z_hat, _ = self.decode(e_hat, tex)
+        e_hat, tex_mu, tex_logvar = self.encode_tex(z)
+        tex = sample_vae(tex_mu, tex_logvar)
+        z_hat, sem = self.decode(e, tex)
 
-        losses = self.calc_losses(e, z, e_hat, z_hat, tex_mu, tex_log_var)
+        losses = self.calc_losses(z, z_hat, sem, e, e_hat, tex_mu, tex_logvar)
         self.log_dict(losses)
-        loss = losses['clip'] # + losses['recon'] + self.init_kl_factor+(self.current_epoch*self.kl_factor_per_epoch)*losses['kl']
+        loss = losses['recon'] + 0.1*losses['kl'] + losses['clip']
         self.log('loss', loss, prog_bar=True)
         return loss
     
@@ -93,12 +94,16 @@ class SketchAutoencoder(L.LightningModule):
     
     def validation_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int):
         z, e = batch # VAE latents, clip embeddings
-        e_hat, tex_mu, tex_log_var = self.encode(z)
-        tex = sample_vae(tex_mu, tex_log_var)
-        z_hat, sem = self.decode(e_hat, tex)
+        e_hat, tex_mu, tex_logvar = self.encode_tex(z)
+        tex = sample_vae(tex_mu, tex_logvar)
+        z_hat, sem = self.decode(e, tex)
 
-        losses = self.calc_losses(e, z, e_hat, z_hat, tex_mu, tex_log_var)
+        self.log('min', float((sem - z).min()), prog_bar=True)
+        self.log('max', float((sem - z).max()), prog_bar=True)
+
+        losses = self.calc_losses(z, z_hat, sem, e, tex_mu, tex_logvar)
         self.log_dict(losses, prog_bar=True)
+
         if batch_idx == 0:
             self.logger.log_image(key='original', images=[self.decode_top_vae_latent(z)])
             self.logger.log_image(key='recon_img ', images=[self.decode_top_vae_latent(z_hat)])
@@ -108,5 +113,6 @@ class SketchAutoencoder(L.LightningModule):
         return torch.optim.AdamW(self.parameters(), lr=self.lr)
     
 def sample_vae(mu: torch.Tensor, log_var: torch.Tensor) -> torch.Tensor:
-    sigma = torch.exp(0.5*log_var) # 1/2 because variance = deviation square
+    return mu
+    sigma = torch.exp(0.5*log_var) # 1/2 because variance = stddev square
     return torch.randn_like(mu) * sigma + mu
