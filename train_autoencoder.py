@@ -26,7 +26,7 @@ if __name__ == "__main__":
 
     model = SketchAutoencoder((4, 32, 32), vae, 640, 4,
                               128, 
-                              16, 6,
+                              8, 6,
                               16, 6)
     data = Ade20kDatamodule(Path('./dataset/'), batch_size=64, num_workers=6)
 
