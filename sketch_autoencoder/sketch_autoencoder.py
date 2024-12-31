@@ -7,7 +7,7 @@ import lightning as L
 import PIL
 from typing import TypedDict
 from taesd.taesd import TAESD
-from .model_blocks import ConvNextBlock, ScaleTanh, ImgUnembedder
+from .model_blocks import ConvNextBlock, ScaleTanh, ImgEmbedder
 from .clip_wrapper import CLIPWrapper
 
 class Losses(TypedDict):
@@ -29,14 +29,8 @@ class SketchAutoencoder(L.LightningModule):
         self.clip_embed_dims = clip_embed_dims
 
         # create img unembedder
-        self.img_unembedder = nn.Sequential(
-            ImgUnembedder(clip_embed_dims, vae_img_size, sem_dims),
-            ScaleTanh(3)
-        )
-        self.sem_gater = nn.Sequential(
-            ImgUnembedder(clip_embed_dims, vae_img_size, sem_dims),
-            nn.Sigmoid()
-        )
+        self.embedder = ImgEmbedder(clip_embed_dims, vae_img_size, sem_dims)
+
         # create texture autoencoder
         self.tex_encoder = nn.Sequential(
             nn.Conv2d(vae_chans, enc_hidden_dims, kernel_size=1),
@@ -53,24 +47,22 @@ class SketchAutoencoder(L.LightningModule):
         # training parameters
         self.lr = lr
 
-    def encode_tex(self, z: torch.Tensor):
+    def encode(self, z: torch.Tensor):
+        e_hat = self.embedder.img_to_embed(z)
         tex_mu, tex_log_var = self.tex_encoder(z).tensor_split(2, dim=1)
-        return tex_mu, tex_log_var
+        return e_hat, tex_mu, tex_log_var
 
     def decode(self, e: torch.Tensor, tex: torch.Tensor):
-        e = F.normalize(e.squeeze(1)) # i goofed the dataset preparation, so there is an extra dim that needs to be removed
-        sem = self.img_unembedder(e)
-        gate = self.sem_gater(e)
-        sem = sem * gate
+        sem = self.embedder.embed_to_img(e)
         dec_input = torch.cat((sem, tex), dim=1)
         z_hat = self.decoder(dec_input)
-        return z_hat, sem
+        return z_hat
     
-    def calc_losses(self, z: torch.Tensor, z_hat: torch.Tensor, sem: torch.Tensor,
-                    e: torch.Tensor,
+    def calc_losses(self, z: torch.Tensor, z_hat: torch.Tensor,
+                    e: torch.Tensor, e_hat: torch.Tensor,
                     tex_mu: torch.Tensor, tex_logvar: torch.Tensor) -> Losses:
-        e = e.squeeze(1) 
-        clip_loss = F.mse_loss(z, sem)
+        e = e.squeeze(1)
+        clip_loss = F.mse_loss(e, e_hat)
         recon_loss = F.mse_loss(z, z_hat)
         tex_kl_loss = (-0.5 * torch.sum(1 + tex_logvar - tex_mu**2 - tex_logvar.exp(), dim=1)).mean()
 
@@ -82,13 +74,13 @@ class SketchAutoencoder(L.LightningModule):
     
     def training_step(self, batch: tuple[torch.Tensor, torch.Tensor]):
         z, e = batch # VAE latents, clip embeddings
-        tex_mu, tex_logvar = self.encode_tex(z)
+        e_hat, tex_mu, tex_logvar = self.encode(z)
         tex = sample_vae(tex_mu, tex_logvar)
-        z_hat, sem = self.decode(e, tex)
+        z_hat = self.decode(e, tex)
 
-        losses = self.calc_losses(z, z_hat, sem, e, tex_mu, tex_logvar)
+        losses = self.calc_losses(z, z_hat, e, e_hat, tex_mu, tex_logvar)
         self.log_dict(losses)
-        loss = losses['recon'] + 0.1*losses['kl'] + losses['clip']
+        loss = losses['recon'] + 0.5*losses['kl'] + losses['clip']
         self.log('loss', loss, prog_bar=True)
         return loss
     
@@ -99,20 +91,16 @@ class SketchAutoencoder(L.LightningModule):
     
     def validation_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int):
         z, e = batch # VAE latents, clip embeddings
-        tex_mu, tex_logvar = self.encode_tex(z)
+        e_hat, tex_mu, tex_logvar = self.encode(z)
         tex = sample_vae(tex_mu, tex_logvar)
-        z_hat, sem = self.decode(e, tex)
+        z_hat = self.decode(e, tex)
 
-        self.log('min', float((sem - z).abs().min()), prog_bar=True)
-        self.log('max', float((sem - z).abs().max()), prog_bar=True)
-
-        losses = self.calc_losses(z, z_hat, sem, e, tex_mu, tex_logvar)
+        losses = self.calc_losses(z, z_hat, e, e_hat, tex_mu, tex_logvar)
         self.log_dict(losses, prog_bar=True)
 
         if batch_idx == 0:
             self.logger.log_image(key='original', images=[self.decode_top_vae_latent(z)])
             self.logger.log_image(key='recon_img ', images=[self.decode_top_vae_latent(z_hat)])
-            self.logger.log_image(key='semantic', images=[self.decode_top_vae_latent(sem)])
 
     def configure_optimizers(self):
         return torch.optim.AdamW(self.parameters(), lr=self.lr)
