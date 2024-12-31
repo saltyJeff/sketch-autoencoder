@@ -38,6 +38,7 @@ class ImgUnembedder(nn.Module):
 
         self.layers = nn.Sequential(
             nn.Linear(embed_dim, hidden_dims),
+            nn.SiLU(),
             nn.Linear(hidden_dims, self.img_dims),
             ScaleTanh(3)
         )

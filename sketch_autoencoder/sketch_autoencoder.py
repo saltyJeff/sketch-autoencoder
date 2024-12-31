@@ -41,7 +41,7 @@ class SketchAutoencoder(L.LightningModule):
             nn.Tanh()
         )
         self.decoder = nn.Sequential(
-            nn.Conv2d(tex_chans, dec_hidden_dims, kernel_size=1),
+            nn.Conv2d(self.vae_chans+tex_chans, dec_hidden_dims, kernel_size=1),
             *[ConvNextBlock(dec_hidden_dims) for _ in range(num_dec_blocks)],
             nn.Conv2d(dec_hidden_dims, self.vae_chans, kernel_size=1),
             ScaleTanh(6)
@@ -52,12 +52,15 @@ class SketchAutoencoder(L.LightningModule):
 
     def encode_tex(self, z: torch.Tensor):
         tex = self.tex_encoder(z)
+        tex = 0.99*tex + 0.01*F.normalize(tex)
         return tex
 
     def decode(self, e: torch.Tensor, tex: torch.Tensor):
         e = F.normalize(e.squeeze(1)) # i goofed the dataset preparation, so there is an extra dim that needs to be removed
         sem_z = self.img_unembedder(e)
-        z_hat = sem_z + self.decoder(tex)
+        sem_z_clone = sem_z.clone().detach()
+        dec_input = torch.cat((sem_z_clone, tex), dim=1)
+        z_hat = sem_z_clone + self.decoder(dec_input)
         return z_hat, sem_z
     
     def calc_losses(self, z: torch.Tensor, z_hat: torch.Tensor, sem: torch.Tensor,
