@@ -19,7 +19,7 @@ class SketchAutoencoder(L.LightningModule):
     def __init__(self, vae_img_size: torch.Size, vae: TAESD, clip_embed_dims: int, 
                  sem_chans: int,
                  init_dims: int, num_blocks: int = 3,
-                 lr: float = 0.1):
+                 lr: float = 1e-4):
         super().__init__()
         self.save_hyperparameters(ignore=['vae'])
         self.vae_chans = vae_img_size[0]
@@ -38,9 +38,7 @@ class SketchAutoencoder(L.LightningModule):
             LayerNorm2d(last_chans, affine=True),
             nn.Flatten(),
             nn.Linear(last_chans, last_chans, bias=False),
-            nn.GELU(),
-            LayerNorm2d(),
-            nn.Linear(clip_embed_dims, clip_embed_dims)
+            nn.Linear(last_chans, clip_embed_dims)
         )
         
         # training parameters
@@ -67,9 +65,9 @@ class SketchAutoencoder(L.LightningModule):
         style, sem, e_hat, z_hat = self.forward(z)
 
         losses = self.calc_losses(z_hat, z, e_hat, e)
-        self.log_dict(losses)
+        self.log_dict(losses, on_epoch=True)
         loss = losses['recon'] + losses['clip'] + 0.1*losses['cos']
-        self.log('loss', loss, prog_bar=True)
+        self.log('loss', loss, prog_bar=True, on_epoch=True)
         return loss
     
     def decode_top_vae_latent(self, x: torch.Tensor) -> PIL.Image.Image:
@@ -82,7 +80,7 @@ class SketchAutoencoder(L.LightningModule):
         style, sem, e_hat, z_hat = self.forward(z)
 
         losses = self.calc_losses(z_hat, z, e_hat, e)
-        self.log_dict(losses, prog_bar=True)
+        self.log_dict(losses, on_epoch=True)
 
         if batch_idx == 0:
             with torch.no_grad():
@@ -93,5 +91,6 @@ class SketchAutoencoder(L.LightningModule):
 
     def configure_optimizers(self):
         optim = torch.optim.AdamW(self.parameters(), lr=self.lr)
-        sched = torch.optim.lr_scheduler.OneCycleLR(optim, epochs=10, steps_per_epoch=400, max_lr = self.lr)
-        return [optim], [sched]
+        return optim
+        # sched = torch.optim.lr_scheduler.OneCycleLR(optim, epochs=10, steps_per_epoch=400, max_lr = self.lr)
+        # return [optim], [sched]

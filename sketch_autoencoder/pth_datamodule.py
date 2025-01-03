@@ -3,7 +3,7 @@ import lightning as L
 from pathlib import Path
 from torch.utils.data import DataLoader, Dataset
 
-class Ade20kDataset(Dataset):
+class PthDataset(Dataset):
     def __init__(self, path: Path):
         super().__init__()
         self.path = path
@@ -16,7 +16,7 @@ class Ade20kDataset(Dataset):
         embed = torch.load(self.path / (img_id+'.clip.pt'), weights_only=True)
         return z, embed
 
-class Ade20kDatamodule(L.LightningDataModule):
+class PthDatamodule(L.LightningDataModule):
     def __init__(self, data_dir: Path, batch_size: int, num_workers: int):
         super().__init__()
         self.num_workers = num_workers
@@ -24,11 +24,15 @@ class Ade20kDatamodule(L.LightningDataModule):
         self.batch_size = batch_size
 
     def setup(self, stage: str):
-        self.train = Ade20kDataset(self.data_dir / 'training')
-        self.validation = Ade20kDataset(self.data_dir / 'validation')
+        self.train = PthDataset(self.data_dir / 'train')
+        self.val = PthDataset(self.data_dir / 'val')
+        self.test = PthDataset(self.data_dir / 'test')
 
     def train_dataloader(self):
         return DataLoader(self.train, shuffle=True, batch_size=self.batch_size, num_workers=self.num_workers, persistent_workers=True)
 
     def val_dataloader(self):
-        return DataLoader(self.validation, shuffle=True, batch_size=self.batch_size)
+        return DataLoader(self.val, shuffle=True, batch_size=self.batch_size)
+
+    def test_dataloader(self):
+        return DataLoader(self.test, shuffle=True, batch_size=self.batch_size)
