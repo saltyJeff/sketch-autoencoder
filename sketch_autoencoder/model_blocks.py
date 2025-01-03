@@ -1,31 +1,11 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from math import prod
+from math import prod, sqrt
 
-class ScaleTanh(nn.Module):
-    def __init__(self, scale: float):
-        super().__init__()
-        self.scale = scale
-    def forward(self, x: torch.Tensor):
-        return F.tanh(x / self.scale) * self.scale
-
-class DownBlock(nn.Module):
-    def __init__(self, in_chans: int, out_chans: int, kernel_size: int = 3):
-        super().__init__()
-        stride = kernel_size//2 + 1
-        self.conv = nn.Conv2d(in_chans, out_chans, kernel_size=kernel_size, stride=stride, padding=kernel_size//2)
-    def forward(self, x: torch.Tensor):
-        return self.conv(x)
-
-class UpBlock(nn.Module):
-    def __init__(self, in_chans: int, out_chans: int, kernel_size: int = 3):
-        super().__init__()
-        scale = kernel_size//2 + 1
-        self.upsample = nn.Upsample(scale_factor=scale)
-        self.conv = nn.Conv2d(in_chans, out_chans, kernel_size=kernel_size, padding=kernel_size//2)
-    def forward(self, x: torch.Tensor):
-        return self.conv(self.upsample(x))
+class LayerNorm2d(nn.GroupNorm):
+    def __init__(self, chans: int = 1, affine: bool = False):
+        super().__init__(1, chans, affine=affine)
 
 class ConvNextBlock(nn.Module):
     def __init__(self, chans: int, kernel_size: int=3, stride: bool = False, hidden_chan_factor: float=4):
@@ -34,7 +14,7 @@ class ConvNextBlock(nn.Module):
         stride_size = kernel_size//2 + 1 if stride else 1
         self.block = nn.Sequential(
             nn.Conv2d(chans, chans, kernel_size=kernel_size, stride=stride_size, padding=kernel_size//2, bias=False),
-            nn.GroupNorm(1, chans),
+            LayerNorm2d(),
             nn.Conv2d(chans, self.hidden_chans, kernel_size=1),
             nn.SiLU(),
             nn.Conv2d(self.hidden_chans, chans, kernel_size=1)
@@ -42,24 +22,22 @@ class ConvNextBlock(nn.Module):
     def forward(self, x: torch.Tensor):
         return x + self.block(x)
 
-def inv_linear(linear: nn.Linear, x: torch.Tensor):
-    if linear.bias is not None:
-        x = x - linear.bias
-    return F.linear(x, linear.weight.T)
-
-class ImgUnembedder(nn.Module):
-    def __init__(self, embed_dim: int, img_size: torch.Size, hidden_dims: int):
+class ReEncoder(nn.Module):
+    def __init__(self, dims: int):
         super().__init__()
-        self.img_size = img_size
-        self.img_dims = prod(self.img_size)
-
-        self.layers = nn.Sequential(
-            nn.Linear(embed_dim, hidden_dims),
-            nn.Linear(hidden_dims, self.img_dims),
-            ScaleTanh(3)
-        )
-
-    def forward(self, e: torch.Tensor) -> torch.Tensor:
-        e = self.layers(e)
-        z = e.view(-1, *self.img_size)
+        self.weight = nn.Parameter(torch.empty(dims, dims))
+        self.reset_parameters()
+    def reset_parameters(self):
+        nn.init.kaiming_uniform_(self.weight, a=sqrt(5))
+    def forward(self, z: torch.Tensor):
+        return self.encode(z)
+    def encode(self, z: torch.Tensor) -> torch.Tensor:
+        z = z.permute(0, 2, 3, 1) # NCHW -> NHWC
+        z = F.linear(z, self.weight)
+        z = z.permute(0, 3, 1, 2) # NHWC -> NCHW
+        return z
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        z = z.permute(0, 2, 3, 1) # NCHW -> NHWC
+        z = F.linear(z, torch.linalg.pinv(self.weight))
+        z = z.permute(0, 3, 1, 2) # NHWC -> NCHW
         return z

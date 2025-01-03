@@ -20,14 +20,12 @@ if __name__ == "__main__":
     del vae.encoder
     vae.eval()
     vae = vae.to('cuda')
-    # clip = CLIPWrapper('convnext_base_w', pretrained='laion2b_s13b_b82k')
+    clip = CLIPWrapper('convnext_base_w', pretrained='laion2b_s13b_b82k')
     # clip.eval()
     # clip = clip.to('cuda')
 
     model = SketchAutoencoder((4, 32, 32), vae, 640, 
-                              16,
-                              128, 
-                              32, 6,
+                              1, 
                               32, 8)
     data = Ade20kDatamodule(Path('./dataset/'), batch_size=64, num_workers=6)
 

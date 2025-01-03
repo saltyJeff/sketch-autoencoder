@@ -43,7 +43,7 @@ def convert_split(split: str):
         vae_img = VAE_TRANSFORMS(img).to('cuda')
         z = vae.encoder(vae_img).clip(min=-vae.latent_magnitude, max=vae.latent_magnitude)
         clip_img = preprocess(img).to('cuda', dtype=torch.bfloat16).unsqueeze(0)
-        embed = clip.encode_image(clip_img)
+        embed = clip.encode_image(clip_img).squeeze(0)
 
         torch.save(z, (OUTPUT_SPLIT_PATH / img_path.with_suffix('.vae.pt').name))
         torch.save(embed, (OUTPUT_SPLIT_PATH / img_path.with_suffix('.clip.pt').name))
