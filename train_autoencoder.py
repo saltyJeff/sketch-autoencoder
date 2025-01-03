@@ -26,14 +26,14 @@ if __name__ == "__main__":
 
     model = SketchAutoencoder((4, 32, 32), vae, 640, 
                               1, 
-                              32, 8)
+                              16)
     data = Ade20kDatamodule(Path('./dataset/'), batch_size=64, num_workers=6)
 
     # Initialize a trainer
     logger = WandbLogger(project="vae_to_clip", log_model=True, save_dir="./.checkpoints/")
     logger.watch(model)
     trainer = L.Trainer(
-        max_epochs=30,
+        max_epochs=50,
         logger=logger,
         precision='bf16-mixed'
     )

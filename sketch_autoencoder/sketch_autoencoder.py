@@ -7,8 +7,8 @@ import lightning as L
 import PIL
 from typing import TypedDict
 from taesd.taesd import TAESD
-from .model_blocks import ConvNextBlock, ReEncoder, LayerNorm2d
-from math import prod
+from .model_blocks import DownBlock, ReEncoder, LayerNorm2d
+import numpy as np
 
 class Losses(TypedDict):
     recon: torch.Tensor
@@ -18,8 +18,8 @@ class Losses(TypedDict):
 class SketchAutoencoder(L.LightningModule):
     def __init__(self, vae_img_size: torch.Size, vae: TAESD, clip_embed_dims: int, 
                  sem_chans: int,
-                 hidden_chans: int, num_blocks: int,
-                 lr: float = 1e-3):
+                 init_dims: int, num_blocks: int = 3,
+                 lr: float = 0.1):
         super().__init__()
         self.save_hyperparameters(ignore=['vae'])
         self.vae_chans = vae_img_size[0]
@@ -30,13 +30,16 @@ class SketchAutoencoder(L.LightningModule):
         self.vae.requires_grad_(False)
 
         self.reencoder = ReEncoder(self.vae_chans)
-        hidden_dims = prod((hidden_chans, vae_img_size[1], vae_img_size[2]))
+        last_chans = init_dims * (2**num_blocks)
         self.embedder = nn.Sequential(
-            nn.Conv2d(sem_chans, sem_chans, kernel_size=1),
+            nn.Conv2d(self.sem_chans, init_dims, kernel_size=1),
+            *[DownBlock(init_dims * 2**i) for i in range(num_blocks)],
             nn.AdaptiveAvgPool2d(1),
-            LayerNorm2d(sem_chans, affine=True),
+            LayerNorm2d(last_chans, affine=True),
             nn.Flatten(),
-            nn.Linear(sem_chans, clip_embed_dims, bias=False),
+            nn.Linear(last_chans, last_chans, bias=False),
+            nn.GELU(),
+            LayerNorm2d(),
             nn.Linear(clip_embed_dims, clip_embed_dims)
         )
         
@@ -55,7 +58,7 @@ class SketchAutoencoder(L.LightningModule):
 
         return {
             'recon': F.mse_loss(z_hat, z),
-            'clip': F.mse_loss(e_hat, e),
+            'clip': F.smooth_l1_loss(e_hat, e),
             'cos': (1 - F.cosine_similarity(e_hat, e)).mean()
         }
     
@@ -65,7 +68,7 @@ class SketchAutoencoder(L.LightningModule):
 
         losses = self.calc_losses(z_hat, z, e_hat, e)
         self.log_dict(losses)
-        loss = losses['recon'] + losses['clip']
+        loss = losses['recon'] + losses['clip'] + 0.1*losses['cos']
         self.log('loss', loss, prog_bar=True)
         return loss
     
@@ -89,4 +92,6 @@ class SketchAutoencoder(L.LightningModule):
                 self.logger.log_image(key='semantic', images=[self.decode_top_vae_latent(self.reencoder.decode(sem_pad))])
 
     def configure_optimizers(self):
-        return torch.optim.AdamW(self.parameters(), lr=self.lr)
+        optim = torch.optim.AdamW(self.parameters(), lr=self.lr)
+        sched = torch.optim.lr_scheduler.OneCycleLR(optim, epochs=10, steps_per_epoch=400, max_lr = self.lr)
+        return [optim], [sched]
