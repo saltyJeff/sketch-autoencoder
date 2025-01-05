@@ -25,6 +25,7 @@ priority = "explicit"
 [tool.poetry.group.dev.dependencies]
 wandb = "^0.18.7"
 python-dotenv = "^1.0.1"
+tensorboard = "^2.18.0"
 
 [build-system]
 requires = ["poetry-core"]

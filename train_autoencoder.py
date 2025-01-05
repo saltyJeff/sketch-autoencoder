@@ -13,7 +13,7 @@ from pathlib import Path
 if __name__ == "__main__":
     load_dotenv()
     torch.set_float32_matmul_precision('medium')
-    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.benchmark = True 
 
     vae = TAESD('taesd/taesdxl_encoder.pth', 'taesd/taesdxl_decoder.pth')
     # delete the encoder to save VRAM
@@ -33,7 +33,7 @@ if __name__ == "__main__":
     logger = WandbLogger(project="vae_to_clip", log_model=True, save_dir="./.checkpoints/")
     logger.watch(model)
     trainer = L.Trainer(
-        max_epochs=30,
+        max_epochs=10,
         logger=logger,
         precision='bf16-mixed'
     )

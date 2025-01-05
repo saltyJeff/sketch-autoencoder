@@ -14,6 +14,7 @@ class Losses(TypedDict):
     recon: torch.Tensor
     clip: torch.Tensor
     cos: torch.Tensor
+    ortho: torch.Tensor
 
 class SketchAutoencoder(L.LightningModule):
     def __init__(self, vae_img_size: torch.Size, vae: TAESD, clip_embed_dims: int, 
@@ -55,9 +56,10 @@ class SketchAutoencoder(L.LightningModule):
                     e_hat: torch.Tensor, e: torch.Tensor) -> Losses:
 
         return {
-            'recon': F.mse_loss(z_hat, z),
+            'recon': F.smooth_l1_loss(z_hat, z),
             'clip': F.smooth_l1_loss(e_hat, e),
-            'cos': (1 - F.cosine_similarity(e_hat, e)).mean()
+            'cos': (1 - F.cosine_similarity(e_hat, e)).mean(),
+            'ortho': F.mse_loss(self.reencoder.weight.T @ self.reencoder.weight, torch.eye(self.vae_chans).to(self.device))
         }
     
     def training_step(self, batch: tuple[torch.Tensor, torch.Tensor]):
@@ -66,7 +68,7 @@ class SketchAutoencoder(L.LightningModule):
 
         losses = self.calc_losses(z_hat, z, e_hat, e)
         self.log_dict(losses, on_epoch=True)
-        loss = losses['recon'] + losses['clip'] + 0.1*losses['cos']
+        loss = losses['recon'] + losses['ortho'] + losses['clip'] + 0.1*losses['cos']
         self.log('loss', loss, prog_bar=True, on_epoch=True)
         return loss
     
