@@ -11,19 +11,18 @@ from .model_blocks import DownBlock, ReEncoder, LayerNorm2d
 import numpy as np
 
 class Losses(TypedDict):
-    recon: torch.Tensor
     clip: torch.Tensor
     cos: torch.Tensor
     ortho: torch.Tensor
 
 class SketchAutoencoder(L.LightningModule):
-    def __init__(self, vae_img_size: torch.Size, vae: TAESD, clip_embed_dims: int, 
+    def __init__(self, vae_chans, vae: TAESD, clip_embed_dims: int, 
                  sem_chans: int,
                  init_dims: int, num_blocks: int = 3,
                  lr: float = 1e-4):
         super().__init__()
         self.save_hyperparameters(ignore=['vae'])
-        self.vae_chans = vae_img_size[0]
+        self.vae_chans = vae_chans
         self.sem_chans = sem_chans
         self.style_chans = self.vae_chans - self.sem_chans
         
@@ -48,15 +47,11 @@ class SketchAutoencoder(L.LightningModule):
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         style, sem = self.reencoder.encode(z).split([self.style_chans, self.sem_chans], dim=1)
         embed = self.embedder(sem)
-        with torch.no_grad():
-            z_hat = self.reencoder.decode(torch.cat((style, sem), dim=1))
-        return style, sem, embed, z_hat
+        return style, sem, embed
     
-    def calc_losses(self, z_hat: torch.Tensor, z: torch.Tensor,
-                    e_hat: torch.Tensor, e: torch.Tensor) -> Losses:
+    def calc_losses(self, e_hat: torch.Tensor, e: torch.Tensor) -> Losses:
 
         return {
-            'recon': F.smooth_l1_loss(z_hat, z),
             'clip': F.smooth_l1_loss(e_hat, e),
             'cos': (1 - F.cosine_similarity(e_hat, e)).mean(),
             'ortho': F.mse_loss(self.reencoder.weight.T @ self.reencoder.weight, torch.eye(self.vae_chans).to(self.device))
@@ -64,11 +59,11 @@ class SketchAutoencoder(L.LightningModule):
     
     def training_step(self, batch: tuple[torch.Tensor, torch.Tensor]):
         z, e = batch # VAE latents, clip embeddings
-        style, sem, e_hat, z_hat = self.forward(z)
+        style, sem, e_hat = self.forward(z)
 
-        losses = self.calc_losses(z_hat, z, e_hat, e)
+        losses = self.calc_losses(e_hat, e)
         self.log_dict(losses, on_epoch=True)
-        loss = losses['recon'] + losses['ortho'] + losses['clip'] + 0.1*losses['cos']
+        loss = losses['ortho'] + losses['clip'] + 0.1*losses['cos']
         self.log('loss', loss, prog_bar=True, on_epoch=True)
         return loss
     
@@ -79,13 +74,14 @@ class SketchAutoencoder(L.LightningModule):
     
     def validation_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int):
         z, e = batch # VAE latents, clip embeddings
-        style, sem, e_hat, z_hat = self.forward(z)
+        style, sem, e_hat = self.forward(z)
 
-        losses = self.calc_losses(z_hat, z, e_hat, e)
+        losses = self.calc_losses(e_hat, e)
         self.log_dict(losses, on_epoch=True)
 
         if batch_idx == 0:
             with torch.no_grad():
+                z_hat = self.reencoder.decode(torch.cat((style, sem), dim=1))
                 self.logger.log_image(key='original', images=[self.decode_top_vae_latent(z)])
                 self.logger.log_image(key='recon_img', images=[self.decode_top_vae_latent(z_hat)])
                 sem_pad = torch.cat((torch.zeros_like(style), sem), dim=1)

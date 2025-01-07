@@ -24,17 +24,18 @@ if __name__ == "__main__":
     # clip.eval()
     # clip = clip.to('cuda')
 
-    model = SketchAutoencoder((4, 32, 32), vae, 640, 
+    model = SketchAutoencoder(4, vae, 640, 
                               1, 
-                              8)
-    data = PthDatamodule(Path('./dataset/'), batch_size=64, num_workers=6)
+                              4)
+    data = PthDatamodule(Path('./dataset/'), batch_size=128, num_workers=6)
 
     # Initialize a trainer
     logger = WandbLogger(project="vae_to_clip", log_model=True, save_dir="./.checkpoints/")
     logger.watch(model)
     trainer = L.Trainer(
-        max_epochs=10,
+        max_epochs=2,
         logger=logger,
         precision='bf16-mixed'
     )
     trainer.fit(model, datamodule=data)
+    torch.save(model.reencoder.weight, 'reencoder.pth')
