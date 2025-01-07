@@ -73,6 +73,7 @@ class SketchAutoencoder(L.LightningModule):
         return Fv2.to_pil_image(img[0])
     
     def validation_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int):
+        print(batch)
         z, e = batch # VAE latents, clip embeddings
         style, sem, e_hat = self.forward(z)
 
