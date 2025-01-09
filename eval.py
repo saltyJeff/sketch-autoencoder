@@ -14,7 +14,7 @@ TRANSFORMS = v2.Compose([
 
 IMG_PATH = Path(__file__).parent / 'img'
 Z_PATH = Path(__file__).parent / '.checkpoints' / 'z_transform.pth'
-LERP = 0.5
+LERP = 0.8
 
 def lerp_dims(left: torch.Tensor, right: torch.Tensor, chans: tuple[int, int], alpha: float):
     left = left.clone()
@@ -46,14 +46,28 @@ if __name__ == "__main__":
         left_z = vae.encoder(LEFT)
         right_z = vae.encoder(RIGHT)
 
-        def lerp_and_save(chans: tuple[int, int], use_z_transform: bool):
+        def recon_and_save(z: torch.Tensor, name: str):
+            orig = vae.decoder(z).clip(0, 1)
+            z = z_transform.decode(z_transform.encode(z))
+            out = vae.decoder(z).clip(0, 1)
+            out_img = v2.functional.to_pil_image(out.squeeze(0))
+            out_img.save(IMG_PATH / (name+'.jpg'))
+
+            delta = (orig - out).abs() * 10
+            out = v2.functional.to_pil_image(delta.clip(0, 1).squeeze(0))
+            out.save(IMG_PATH / (name+'_delta.jpg'))
+        
+        recon_and_save(left_z, 'left_recon')
+        recon_and_save(right_z, 'right_recon')
+
+        def lerp_and_save(chans: tuple[int, int], use_z_transform: bool, alpha: float = LERP):
             if use_z_transform:
                 left = z_transform.encode(left_z)
                 right = z_transform.encode(right_z)
             else:
                 left = left_z.clone()
                 right = right_z.clone()
-            out = lerp_dims(left, right, chans, LERP)
+            out = lerp_dims(left, right, chans, alpha)
 
             if use_z_transform:
                 out = z_transform.decode(out)
