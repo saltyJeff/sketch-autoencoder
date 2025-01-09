@@ -1,71 +1,72 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from math import prod
+from math import prod, sqrt
 
-@torch.jit.script
-def instance_norm_2d(x: torch.Tensor, eps: float = 1e-4):
-    var, mean = torch.var_mean(x, dim=(-2, -1), keepdim=True)
-    return (x - mean) / (torch.sqrt(var + eps))
+class LayerNorm2d(nn.GroupNorm):
+    def __init__(self, chans: int = -1):
+        if chans < 0:
+            chans = 1
+            affine = False
+        else:
+            affine = True
+        super().__init__(1, chans, affine=affine)
 
-class InstanceNorm2d(nn.Module):
-    """Replacement for nn.InstanceNorm2D that respects channels_last"""
-    def __init__(self, eps=1e-4):
+class DownBlock(nn.Module):
+    def __init__(self, chans: int):
         super().__init__()
-        self.eps = eps
-
-    def forward(self, x: torch.Tensor):
-        return instance_norm_2d(x, self.eps)
-    
-
-class ScaleTanh(nn.Module):
-    def __init__(self, scale: float):
-        super().__init__()
-        self.scale = scale
-    def forward(self, x: torch.Tensor):
-        return F.tanh(x / self.scale) * self.scale
-
-class ConvNextBlock(nn.Module):
-    def __init__(self, chans: int, kernel_size: int=3, stride: bool = False, hidden_chan_factor: float=4):
-        super().__init__()
-        self.hidden_chans = int(chans * hidden_chan_factor)
-        stride_size = kernel_size//2 + 1 if stride else 1
+        self.in_conv = nn.Sequential(
+            nn.Conv2d(chans, 2*chans, kernel_size=3, stride=2, padding=1, bias=False),
+            LayerNorm2d(2*chans),
+        )
         self.block = nn.Sequential(
-            nn.Conv2d(chans, chans, kernel_size=kernel_size, stride=stride_size, padding=kernel_size//2, bias=False),
-            nn.GroupNorm(1, chans),
-            nn.Conv2d(chans, self.hidden_chans, kernel_size=1),
-            nn.SiLU(),
-            nn.Conv2d(self.hidden_chans, chans, kernel_size=1)
+            nn.Conv2d(2*chans, 4*chans, kernel_size=1),
+            nn.GELU(),
+            nn.Conv2d(4*chans, 2*chans, kernel_size=1)
         )
     def forward(self, x: torch.Tensor):
-        return x + self.block(x)
-
-def inv_linear(linear: nn.Linear, x: torch.Tensor):
-    if linear.bias is not None:
-        x = x - linear.bias
-    return F.linear(x, torch.linalg.pinv(linear.weight))
+        x = self.in_conv(x)
+        x = x + self.block(x)
+        return x
 
 class ImgEmbedder(nn.Module):
-    def __init__(self, embed_dim: int, img_size: torch.Size, hidden_dims: int):
+    def __init__(self, in_chans: int, out_chans: int, first_chans: int, num_blocks: int):
         super().__init__()
-        self.img_size = img_size
-        self.img_dims = prod(self.img_size)
-        self.eps = 1e-4
-
-        self.z_to_h = nn.Linear(self.img_dims, hidden_dims)
-        self.h_to_e = nn.Linear(hidden_dims, embed_dim, bias=False)
-
-    def img_to_embed(self, z: torch.Tensor) -> torch.Tensor:
-        z = z.flatten(1)
-        h = self.z_to_h(z)
-        e = self.h_to_e(h)
-        return e
-    
-    @torch.no_grad()
-    def embed_to_img(self, e: torch.Tensor) -> torch.Tensor:
-        h = inv_linear(self.h_to_e, e)
-        z = inv_linear(self.z_to_h, h)
-        z = z.view(-1, *self.img_size)
+        self.in_conv = nn.Conv2d(in_chans, first_chans, kernel_size=1)
+        self.blocks = nn.Sequential(
+            *[DownBlock(first_chans * 2**i) for i in range(num_blocks)]
+        )
+        last_chans = first_chans * (2**num_blocks)
+        self.embedder = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            LayerNorm2d(last_chans),
+            nn.Flatten(),
+            nn.Linear(last_chans, out_chans),
+        )
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.in_conv(x)
+        x = self.blocks(x)
+        x = self.embedder(x)
+        return x
+        
+class InvertibleLinear(nn.Module):
+    def __init__(self, dims: int):
+        super().__init__()
+        self.weight = nn.Parameter(torch.empty(dims, dims))
+        self.reset_parameters()
+    def reset_parameters(self):
+        nn.init.kaiming_uniform_(self.weight, a=sqrt(5))
+    def forward(self, z: torch.Tensor):
+        return self.encode(z)
+    def encode(self, z: torch.Tensor) -> torch.Tensor:
+        z = z.permute(0, 2, 3, 1) # NCHW -> NHWC
+        z = F.linear(z, self.weight)
+        z = z.permute(0, 3, 1, 2) # NHWC -> NCHW
+        return z
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        z = z.permute(0, 2, 3, 1) # NCHW -> NHWC
+        z = F.linear(z, self.weight.T)
+        z = z.permute(0, 3, 1, 2) # NHWC -> NCHW
         return z
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:

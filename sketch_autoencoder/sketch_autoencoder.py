@@ -7,81 +7,74 @@ import lightning as L
 import PIL
 from typing import TypedDict
 from taesd.taesd import TAESD
-from .model_blocks import ConvNextBlock, ScaleTanh, ImgEmbedder
-from .clip_wrapper import CLIPWrapper
+from .model_blocks import ImgEmbedder, InvertibleLinear, LayerNorm2d
+import numpy as np
+import random
 
 class Losses(TypedDict):
-    recon: torch.Tensor
-    clip: torch.Tensor
-    kl: torch.Tensor
+    sem_clip: torch.Tensor
+    style_clip: torch.Tensor
+    ortho: torch.Tensor
+    norm: torch.Tensor
 
 class SketchAutoencoder(L.LightningModule):
-    def __init__(self, vae_img_size: torch.Size, vae: TAESD, clip_embed_dims: int, tex_chans: int, 
-                 sem_dims: int,
-                 enc_hidden_dims: int, num_enc_blocks: int,
-                 dec_hidden_dims: int, num_dec_blocks: int,
+    def __init__(self, vae_chans, vae: TAESD, clip_embed_dims: int,
+                 sem_chans: int,
+                 embed_init_dims: int, num_embed_blocks: int = 3,
                  lr: float = 1e-4):
         super().__init__()
         self.save_hyperparameters(ignore=['vae'])
-        vae_chans = vae_img_size[0]
+        self.eye = None
+        self.vae_chans = vae_chans
+        self.sem_chans = sem_chans
+        self.style_chans = self.vae_chans - self.sem_chans
+        
         self.vae = vae
         self.vae.requires_grad_(False)
-        self.clip_embed_dims = clip_embed_dims
 
-        # create img unembedder
-        self.embedder = ImgEmbedder(clip_embed_dims, vae_img_size, sem_dims)
-
-        # create texture autoencoder
-        self.tex_encoder = nn.Sequential(
-            nn.Conv2d(vae_chans, enc_hidden_dims, kernel_size=1),
-            *[ConvNextBlock(enc_hidden_dims) for _ in range(num_enc_blocks)],
-            nn.Conv2d(enc_hidden_dims, 2*tex_chans, kernel_size=1),
-        )
-        self.decoder = nn.Sequential(
-            nn.Conv2d(tex_chans + vae_chans, dec_hidden_dims, kernel_size=1),
-            *[ConvNextBlock(dec_hidden_dims) for _ in range(num_dec_blocks)],
-            nn.Conv2d(dec_hidden_dims, vae_chans, kernel_size=1),
-            ScaleTanh(3)
-        )
+        self.z_transform = InvertibleLinear(self.vae_chans)
+        self.sem_embedder = ImgEmbedder(self.sem_chans, clip_embed_dims, embed_init_dims, num_embed_blocks)
+        self.style_embedder = ImgEmbedder(self.style_chans, clip_embed_dims, embed_init_dims, num_embed_blocks)
         
         # training parameters
         self.lr = lr
 
-    def encode(self, z: torch.Tensor):
-        e_hat = self.embedder.img_to_embed(z)
-        tex_mu, tex_log_var = self.tex_encoder(z).tensor_split(2, dim=1)
-        return e_hat, tex_mu, tex_log_var
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        sem, style = self.z_transform.encode(z).split([self.sem_chans, self.style_chans], dim=1)
+        sem_e = self.sem_embedder(sem)
+        style_e = self.style_embedder(style)
 
-    def decode(self, e: torch.Tensor, tex: torch.Tensor):
-        sem = self.embedder.embed_to_img(e)
-        dec_input = torch.cat((sem, tex), dim=1)
-        z_hat = self.decoder(dec_input)
-        return z_hat
+        return sem, sem_e, style, style_e
     
-    def calc_losses(self, z: torch.Tensor, z_hat: torch.Tensor,
-                    e: torch.Tensor, e_hat: torch.Tensor,
-                    tex_mu: torch.Tensor, tex_logvar: torch.Tensor) -> Losses:
-        e = e.squeeze(1)
-        clip_loss = F.mse_loss(e, e_hat)
-        recon_loss = F.mse_loss(z, z_hat)
-        tex_kl_loss = (-0.5 * torch.sum(1 + tex_logvar - tex_mu**2 - tex_logvar.exp(), dim=1)).mean()
-
+    def calc_losses(self, sem_e_hat: torch.Tensor, sem_e: torch.Tensor,
+                    style_e_hat: torch.Tensor, style_e: torch.Tensor) -> Losses:
+        if self.eye is None:
+            self.eye = torch.eye(self.vae_chans).to(self.device)
         return {
-            'recon': recon_loss,
-            'clip': clip_loss,
-            'kl': tex_kl_loss
+            'ortho': F.mse_loss(self.z_transform.weight.T @ self.z_transform.weight, self.eye, reduction='sum'),
+            'norm': torch.linalg.vector_norm(torch.linalg.vector_norm(self.z_transform.weight, dim=0) - 1).sum(),
+            'sem_clip': F.smooth_l1_loss(sem_e_hat, sem_e),
+            'style_clip': F.smooth_l1_loss(style_e_hat, style_e)
         }
-    
-    def training_step(self, batch: tuple[torch.Tensor, torch.Tensor]):
-        z, e = batch # VAE latents, clip embeddings
-        e_hat, tex_mu, tex_logvar = self.encode(z)
-        tex = sample_vae(tex_mu, tex_logvar)
-        z_hat = self.decode(e, tex)
 
-        losses = self.calc_losses(z, z_hat, e, e_hat, tex_mu, tex_logvar)
-        self.log_dict(losses)
-        loss = losses['recon'] + 0.5*losses['kl'] + losses['clip']
-        self.log('loss', loss, prog_bar=True)
+    def load_batch(self, batch):
+        z: torch.Tensor = batch['vae_img']
+        sem_idx = random.randrange(batch['clip_txt'].shape[1])
+        sem_e: torch.Tensor = batch['clip_txt'][:, sem_idx, :].squeeze(1)
+        sem_e = F.normalize(sem_e)
+        style_e: torch.Tensor = F.normalize(batch['clip_img']) - sem_e
+
+        # increase magnitudes for more trainable gradients
+        return 2*z.float(), 2*sem_e.float(), 2*style_e.float()
+    
+    def training_step(self, batch):
+        z, sem_e, style_e = self.load_batch(batch)
+        sem, sem_e_hat, style, style_e_hat = self.forward(z)
+
+        losses = self.calc_losses(sem_e_hat, sem_e, style_e_hat, style_e)
+        self.log_dict(losses, on_epoch=True)
+        loss = losses['ortho'] + losses['norm'] + losses['sem_clip'] + losses['style_clip']
+        self.log('loss', loss, prog_bar=True, on_epoch=True)
         return loss
     
     def decode_top_vae_latent(self, x: torch.Tensor) -> PIL.Image.Image:
@@ -90,21 +83,24 @@ class SketchAutoencoder(L.LightningModule):
         return Fv2.to_pil_image(img[0])
     
     def validation_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int):
-        z, e = batch # VAE latents, clip embeddings
-        e_hat, tex_mu, tex_logvar = self.encode(z)
-        tex = sample_vae(tex_mu, tex_logvar)
-        z_hat = self.decode(e, tex)
+        z, sem_e, style_e = self.load_batch(batch)
+        sem, sem_e_hat, style, style_e_hat = self.forward(z)
 
-        losses = self.calc_losses(z, z_hat, e, e_hat, tex_mu, tex_logvar)
-        self.log_dict(losses, prog_bar=True)
+        losses = self.calc_losses(sem_e_hat, sem_e, style_e_hat, style_e)
+        self.log_dict(losses, prog_bar=True, on_epoch=True)
 
         if batch_idx == 0:
-            self.logger.log_image(key='original', images=[self.decode_top_vae_latent(z)])
-            self.logger.log_image(key='recon_img ', images=[self.decode_top_vae_latent(z_hat)])
+            with torch.no_grad():
+                z_hat = torch.cat((sem, style), dim=1)
+                z_hat = self.z_transform.decode(z_hat)
+                self.logger.log_image(key='original', images=[self.decode_top_vae_latent(z)])
+                self.logger.log_image(key='recon_img', images=[self.decode_top_vae_latent(z_hat)])
+                sem_hat = torch.cat((sem, torch.zeros_like(style)), dim=1)
+                sem_hat = self.z_transform.decode(sem_hat)
+                self.logger.log_image(key='semantic', images=[self.decode_top_vae_latent(sem_hat)])
 
     def configure_optimizers(self):
-        return torch.optim.AdamW(self.parameters(), lr=self.lr)
-    
-def sample_vae(mu: torch.Tensor, log_var: torch.Tensor) -> torch.Tensor:
-    sigma = torch.exp(0.5*log_var) # 1/2 because variance = stddev square
-    return torch.randn_like(mu) * sigma + mu
+        optim = torch.optim.AdamW(self.parameters(), lr=self.lr)
+        return optim
+        # sched = torch.optim.lr_scheduler.OneCycleLR(optim, epochs=10, steps_per_epoch=400, max_lr = self.lr)
+        # return [optim], [sched]
