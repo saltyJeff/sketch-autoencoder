@@ -19,29 +19,23 @@ if __name__ == "__main__":
 
     TAESD_ROOT = Path(taesd.taesd.__file__).parent
 
-    vae = TAESD(TAESD_ROOT / 'taesdxl_encoder.pth', TAESD_ROOT / 'taesdxl_decoder.pth').bfloat16()
+    vae = TAESD(TAESD_ROOT / 'taesdxl_encoder.pth', TAESD_ROOT / 'taesdxl_decoder.pth')
     vae.eval()
     vae.requires_grad_(False)
     vae = vae.to('cuda')
 
-    clip, _, clip_preprocess = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k', precision='bf16')
-    clip_tokenizer = open_clip.get_tokenizer('ViT-B-32')
-    clip.eval()
-    clip.requires_grad_(False)
-    clip = clip.to('cuda')
-
-    model = SketchAutoencoder(4, vae, 640, 
-                              1, 
+    model = SketchAutoencoder(4, vae, 512, 
+                              2, 
                               4)
-    data = CocoDatamodule(vae, clip, clip_preprocess, clip_tokenizer, batch_size=128, num_workers=6)
+    data = CocoDatamodule(vae, batch_size=64, num_workers=8)
 
     # Initialize a trainer
     logger = WandbLogger(project="sketch_autoencoder", log_model=True, save_dir="./.checkpoints/")
     logger.watch(model)
     trainer = L.Trainer(
-        max_epochs=2,
+        max_epochs=5,
         logger=logger,
-        precision='bf16-mixed'
+        precision='bf16-mixed' 
     )
     trainer.fit(model, datamodule=data)
-    torch.save(model.reencoder.weight, 'reencoder.pth')
+    torch.save(model.z_transform.state_dict(), '.checkpoints/z_transform.pth')
