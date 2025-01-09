@@ -27,7 +27,7 @@ if __name__ == "__main__":
     model = SketchAutoencoder(4, vae, 512, 
                               2, 
                               4)
-    data = CocoDatamodule(vae, batch_size=64, num_workers=8)
+    data = CocoDatamodule(vae, batch_size=64, num_workers=4)
 
     # Initialize a trainer
     logger = WandbLogger(project="sketch_autoencoder", log_model=True, save_dir="./.checkpoints/")

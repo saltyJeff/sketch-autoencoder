@@ -65,7 +65,7 @@ class SketchAutoencoder(L.LightningModule):
         style_e: torch.Tensor = F.normalize(batch['clip_img']) - sem_e
 
         # increase magnitudes for more trainable gradients
-        return 2*z.float(), 2*sem_e.float(), 2*style_e.float()
+        return z.float(), 2*sem_e.float(), 2*style_e.float()
     
     def training_step(self, batch):
         z, sem_e, style_e = self.load_batch(batch)

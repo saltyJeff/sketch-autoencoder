@@ -40,10 +40,13 @@ class CocoDatamodule(L.LightningDataModule):
         self.vae = self.vae.float()
         del self.vae
 
+        print('train/val/test sizes', len(self.train), len(self.val), len(self.test))
+
     def load_split(self, split: str):
+        # must use custom hash id
         return load_dataset('romrawinjp/mscoco', split=split) \
             .remove_columns(['filename', 'cocoid']) \
-            .map(self.map_coco_row, remove_columns=['image', 'en'], new_fingerprint='myhash2') \
+            .map(self.map_coco_row, remove_columns=['image', 'en'], new_fingerprint=f'{split}-myhash') \
             .with_format("torch")
     
     @torch.no_grad()
