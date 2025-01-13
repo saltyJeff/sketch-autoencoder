@@ -14,7 +14,7 @@ TRANSFORMS = v2.Compose([
 
 IMG_PATH = Path(__file__).parent / 'img'
 Z_PATH = Path(__file__).parent / '.checkpoints' / 'z_transform.pth'
-LERP = 0.8
+LERP = 0.9
 
 def lerp_dims(left: torch.Tensor, right: torch.Tensor, chans: tuple[int, int], alpha: float):
     left = left.clone()

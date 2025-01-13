@@ -15,7 +15,6 @@ class Losses(TypedDict):
     sem_clip: torch.Tensor
     style_clip: torch.Tensor
     ortho: torch.Tensor
-    norm: torch.Tensor
 
 class SketchAutoencoder(L.LightningModule):
     def __init__(self, vae_chans, vae: TAESD, clip_embed_dims: int,
@@ -52,20 +51,20 @@ class SketchAutoencoder(L.LightningModule):
             self.eye = torch.eye(self.vae_chans).to(self.device)
         return {
             'ortho': F.mse_loss(self.z_transform.weight.T @ self.z_transform.weight, self.eye, reduction='sum'),
-            'norm': torch.linalg.vector_norm(torch.linalg.vector_norm(self.z_transform.weight, dim=0) - 1).sum(),
-            'sem_clip': F.smooth_l1_loss(sem_e_hat, sem_e),
-            'style_clip': F.smooth_l1_loss(style_e_hat, style_e)
+            'sem_clip': F.l1_loss(sem_e_hat, sem_e),
+            'style_clip': F.l1_loss(style_e_hat, style_e)
         }
 
     def load_batch(self, batch):
         z: torch.Tensor = batch['vae_img']
-        sem_idx = random.randrange(batch['clip_txt'].shape[1])
-        sem_e: torch.Tensor = batch['clip_txt'][:, sem_idx, :].squeeze(1)
-        sem_e = F.normalize(sem_e)
-        style_e: torch.Tensor = F.normalize(batch['clip_img']) - sem_e
+        clip_txt_idx = random.randrange(batch['clip_txt'].shape[1])
+        clip_txt: torch.Tensor = batch['clip_txt'][:, clip_txt_idx, :].squeeze(1)
+        clip_img: torch.Tensor = batch['clip_img']
 
-        # increase magnitudes for more trainable gradients
-        return z.float(), 2*sem_e.float(), 2*style_e.float()
+        sem_e = F.normalize(clip_txt)
+        style_e = F.normalize(clip_img) - sem_e
+
+        return z.float(), sem_e.float(), style_e.float()
     
     def training_step(self, batch):
         z, sem_e, style_e = self.load_batch(batch)
@@ -73,7 +72,7 @@ class SketchAutoencoder(L.LightningModule):
 
         losses = self.calc_losses(sem_e_hat, sem_e, style_e_hat, style_e)
         self.log_dict(losses, on_epoch=True)
-        loss = losses['ortho'] + losses['norm'] + losses['sem_clip'] + losses['style_clip']
+        loss = losses['ortho'] + losses['sem_clip'] + losses['style_clip']
         self.log('loss', loss, prog_bar=True, on_epoch=True)
         return loss
     
