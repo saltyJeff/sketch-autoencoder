@@ -43,14 +43,18 @@ The image embedders provide a way for the module to learn to separate the semant
 
 ### Losses
 To achieve the orthogonal objective, the following loss is minimized:
-$$ MSE(Q^TQ, I) $$
+
+$$MSE(Q^TQ, I)$$
+
 Where:
 - $Q$ is the weight of the invertible linear model
 - I is the identity matrix, and
 - MSE is a mean squares error loss.
 
 For the image embedders, the following loss is minimized:
-$$ MSE(semantic, embedder_{semantic}(sem_z)) + MSE(style, embedder_{style}(style_z)) $$
+
+$$MSE(semantic, embedder_{semantic}(sem_z)) + MSE(style, embedder_{style}(style_z))$$
+
 Where:
 - $sem_z$ and $style_z$ are the semantic and style channels of the latent space
 - $embedder_{semantic}(sem_z)$ and $embedder_{style}(style_z)$ represent the model outputs of applying the semantic image embedder and style image embedder on the semantic channels and style channels respectively
