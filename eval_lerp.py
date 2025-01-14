@@ -77,7 +77,7 @@ if __name__ == "__main__":
             out_name = 'lerp'
             if use_z_transform:
                 out_name += '-z'
-            out_name += f'-{chans[0]}{chans[1]}'
+            out_name += ('-' + ''.join(str(c) for c in chans))
             out_name += '.jpg'
             out.save(IMG_PATH / out_name)
 
@@ -85,4 +85,6 @@ if __name__ == "__main__":
         lerp_and_save((2, 3), True)
 
         for chan_pair in itertools.combinations(range(4), 2):
+            lerp_and_save(chan_pair, False)
+        for chan_pair in itertools.combinations(range(4), 1):
             lerp_and_save(chan_pair, False)
